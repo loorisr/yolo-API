@@ -1,0 +1,288 @@
+openapi: 3.0.3
+info:
+  title: NVR Vision API (YOLO26)
+  version: 1.0.0
+  description: Snapshot in, detections out. YOLO26 e2e, CPU, purego/no-CGO.
+servers:
+  - url: http://localhost:8080
+security:
+  - ApiKey: []
+paths:
+  /health:
+    get:
+      security: []
+      summary: Liveness (open)
+      responses:
+        '200':
+          description: ok
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+              description: Random 16-byte hex request ID, also logged server-side.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        '405':
+          description: method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /ready:
+    get:
+      security: []
+      summary: Readiness (open, 503 until model loaded)
+      responses:
+        '200':
+          description: ready
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ready:
+                    type: boolean
+                    example: true
+                  model:
+                    type: string
+                    example: yolo26n
+        '503':
+          description: model not ready
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ready:
+                    type: boolean
+                    example: false
+        '405':
+          description: method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/models:
+    get:
+      summary: List available models
+      responses:
+        '200':
+          description: models
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active:
+                    type: string
+                    example: yolo26n
+                  models:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        size_mb:
+                          type: number
+        '401':
+          description: missing/invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '405':
+          description: method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/detect:
+    post:
+      summary: Detect objects in a snapshot
+      parameters:
+        - in: query
+          name: min_conf
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+            default: 0.25
+        - in: query
+          name: classes
+          schema:
+            type: string
+            example: person,car,bicycle
+          description: Comma-separated COCO labels to keep. Empty = all.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                image:
+                  type: string
+                  format: binary
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+          image/jpg:
+            schema:
+              type: string
+              format: binary
+          image/png:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: detections
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+                example: 9f3a1b2c4d5e6f708192a3b4c5d6e7f8
+              description: Mirrors the request_id body field.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [model, width, height, inference_ms, request_id, detections]
+                properties:
+                  model:
+                    type: string
+                    example: yolo26n
+                  width:
+                    type: integer
+                  height:
+                    type: integer
+                  inference_ms:
+                    type: number
+                  request_id:
+                    type: string
+                    example: 9f3a1b2c4d5e6f708192a3b4c5d6e7f8
+                  detections:
+                    type: array
+                    items:
+                      type: object
+                      required: [class_id, label, confidence, box, box_norm]
+                      properties:
+                        class_id:
+                          type: integer
+                          example: 0
+                        label:
+                          type: string
+                          example: person
+                        confidence:
+                          type: number
+                          example: 0.87
+                        box:
+                          type: object
+                          properties:
+                            x_min:
+                              type: number
+                            y_min:
+                              type: number
+                            x_max:
+                              type: number
+                            y_max:
+                              type: number
+                          description: Pixels in original image space
+                        box_norm:
+                          type: object
+                          properties:
+                            x_min:
+                              type: number
+                            y_min:
+                              type: number
+                            x_max:
+                              type: number
+                            y_max:
+                              type: number
+                          description: Normalized 0-1
+        '400':
+          description: bad image
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: missing/invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '405':
+          description: method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: body too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '499':
+          description: client closed request during inference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: inference failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: model not ready or pool saturated (check Retry-After)
+          headers:
+            Retry-After:
+              schema:
+                type: string
+                example: '5'
+              description: Present when the inference pool is saturated (30s wait exceeded).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    Error:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          type: string
+          example: bad image
+        request_id:
+          type: string
+          example: 9f3a1b2c4d5e6f708192a3b4c5d6e7f8
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: "Required only if server sets API_KEY. Authorization: Bearer <key> also accepted."

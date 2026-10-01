@@ -1,0 +1,2 @@
+# Local ONNX files are ignored; the Docker image bakes yolo26n explicitly.
+*.onnx

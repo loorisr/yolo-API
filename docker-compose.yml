@@ -1,0 +1,26 @@
+services:
+  yolo-api:
+    build:
+      context: .
+    image: yolo-api:latest
+    # No env_file: every var has a default below,
+    # overridable via shell environment, e.g. API_KEY=secret docker compose up.
+    environment:
+      ADDR: ${ADDR:-:8080}
+      # Default: the baked n model. To use the larger s model, mount it and set
+      # MODEL_PATH=/models_custom/yolo26s.onnx (see SPEC §7).
+      MODEL_PATH: ${MODEL_PATH:-/models/yolo26n.onnx}
+      MODEL_URL: ${MODEL_URL:-}
+      IMG_SIZE: ${IMG_SIZE:-640}
+      MIN_CONF: ${MIN_CONF:-0.25}
+      INTRA_THREADS: ${INTRA_THREADS:-4}
+      POOL_SIZE: ${POOL_SIZE:-1}
+      API_KEY: ${API_KEY:-}
+      MAX_BODY_MB: ${MAX_BODY_MB:-8}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    ports:
+      - "8080:8080"
+    # Custom/override models only — never mount over /models (baked n lives there).
+    volumes:
+      - ./models_custom:/models_custom:ro
+    restart: unless-stopped
