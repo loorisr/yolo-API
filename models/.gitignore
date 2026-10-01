@@ -1,2 +1,4 @@
-# Local ONNX files are ignored; the Docker image bakes yolo26n explicitly.
+# Local ONNX files are ignored, except the n model baked into the Docker image.
+# (The image COPYs models/yolo26n.onnx, so it must be tracked for CI builds.)
 *.onnx
+!yolo26n.onnx
