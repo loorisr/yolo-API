@@ -5,7 +5,7 @@
 # Stable (3.24) only carries ORT 1.24.x, so the runtime rides edge to track
 # latest; no version pin — apk resolves the newest available at build time.
 
-FROM golang:1.27-alpine AS builder
+FROM golang:1-alpine AS builder
 RUN apk add --no-cache ca-certificates
 WORKDIR /src
 COPY go.mod go.sum ./
