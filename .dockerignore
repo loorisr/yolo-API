@@ -1,0 +1,13 @@
+# Keep the build context small: the Dockerfile only needs the Go sources,
+# models/yolo26n.onnx and tests/testdata/bus.jpg.
+.git
+.github
+.dockerignore
+.env
+*.md
+openapi.yaml
+docker-compose.yml
+scripts
+models_custom
+models/*
+!models/yolo26n.onnx
