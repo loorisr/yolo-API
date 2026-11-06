@@ -11,7 +11,7 @@ import (
 )
 
 // Config holds all server configuration, parsed from the environment.
-// See SPEC.md §6 and docker-compose.yml.
+// See API.md (configuration table) and docker-compose.yml.
 type Config struct {
 	Addr         string
 	ModelPath    string
@@ -57,7 +57,7 @@ func getfloat(key string, def float64) (float64, error) {
 	return f, nil
 }
 
-// Load parses the environment into a Config, applying SPEC §6 defaults.
+// Load parses the environment into a Config, applying the documented defaults.
 func Load() (*Config, error) {
 	c := &Config{
 		Addr:       getenv("ADDR", ":8080"),
@@ -112,6 +112,11 @@ func Load() (*Config, error) {
 	}
 	if c.MaxBodyMB <= 0 || c.MaxBodyMB > 64 {
 		return nil, fmt.Errorf("invalid MAX_BODY_MB=%d (must be 1..64)", c.MaxBodyMB)
+	}
+	if c.IntraThreads == 0 {
+		// Split the cores across sessions. Leaving 0 would let ORT give every
+		// session all cores, oversubscribing the CPU POOL_SIZE times over.
+		c.IntraThreads = max(1, runtime.NumCPU()/c.PoolSize)
 	}
 	if c.IntraThreads < 0 {
 		return nil, fmt.Errorf("invalid INTRA_THREADS=%d (must be >= 0)", c.IntraThreads)

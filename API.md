@@ -411,7 +411,7 @@ defer resp.Body.Close()
 | `ORT_LIB_PATH` | `/usr/lib/libonnxruntime.so.1` | (image) | `.so` musl via apk | `dlopen` ; échec → `/ready` reste `503` |
 | `IMG_SIZE` | `640` | `640` | `1..2048`, doit matcher l'export | taille letterbox ; mismatch → erreur dummy inference au boot |
 | `MIN_CONF` | `0.25` | `0.25` | `0..1` | défaut de `?min_conf=` |
-| `INTRA_THREADS` | `0` (=auto) | `4` | — | threads intra-op ORT par session |
+| `INTRA_THREADS` | `0` (=`max(1, NumCPU/POOL_SIZE)`) | `4` | — | threads intra-op ORT par session |
 | `POOL_SIZE` | `0` (=NumCPU) | `1` | `1..64` | sessions ORT concurrentes ; tuning `POOL_SIZE × INTRA_THREADS ≈ NumCPU` |
 | `API_KEY` | vide (ouvert) | vide | — | si définie, exigée sur `/v1/*` |
 | `MAX_BODY_MB` | `8` | `8` | `1..64` | seuil `413` |
