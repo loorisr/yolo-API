@@ -43,9 +43,11 @@ func run() error {
 	srv := httpapi.New(cfg, shortModelName(cfg.ModelPath), log, modelsDir)
 
 	// activeDet is closed after graceful shutdown once all handlers (and thus
-	// in-flight Detect calls) have drained.
+	// in-flight Detect calls) have drained. shuttingDown tells a loader that
+	// finishes late to close its detector itself instead of installing it.
 	var activeMu sync.Mutex
 	var activeDet detector.Detector
+	var shuttingDown bool
 
 	// Load the model in the background so /health answers immediately and
 	// /ready reports 503 until the ORT pool is up.
@@ -68,10 +70,14 @@ func run() error {
 			_ = det.Close()
 			return
 		}
-		srv.SetDetector(det)
 		activeMu.Lock()
+		defer activeMu.Unlock()
+		if shuttingDown {
+			_ = det.Close()
+			return
+		}
 		activeDet = det
-		activeMu.Unlock()
+		srv.SetDetector(det)
 		srv.MarkReady()
 	}()
 
@@ -104,18 +110,25 @@ func run() error {
 		}
 		return nil
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	err = httpSrv.Shutdown(shutdownCtx)
-
-	// In-flight handlers have drained; release the ORT sessions/runtime.
 	activeMu.Lock()
+	shuttingDown = true
 	d := activeDet
 	activeMu.Unlock()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		// Some handlers may still be inside Detect: closing the ORT runtime
+		// under them would be a use-after-free. The process is exiting
+		// anyway, so let the OS reclaim it.
+		log.Warn("graceful shutdown incomplete, skipping ORT cleanup", "error", err)
+		return err
+	}
+	// In-flight handlers have drained; release the ORT sessions/runtime.
 	if d != nil {
 		_ = d.Close()
 	}
-	return err
+	return nil
 }
 
 // smokeDetect runs a single inference at startup and logs every detected
