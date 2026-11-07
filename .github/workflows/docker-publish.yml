@@ -11,6 +11,8 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # glibc ONNX Runtime for the Go integration test (taken from the PyPI wheel).
+  ORT_VERSION: "1.31.1"
 
 jobs:
   test:
@@ -22,8 +24,36 @@ jobs:
           go-version: "1.27"
           cache: true
       - run: go vet ./...
-      - run: go test ./...
+      - run: go test -race ./...
+      - name: Fetch ONNX Runtime
+        run: |
+          d="$RUNNER_TEMP/ort"
+          python3 -m pip download --quiet --no-deps --only-binary=:all: \
+            --platform manylinux_2_28_x86_64 --python-version 3.12 \
+            -d "$d" "onnxruntime==${ORT_VERSION}"
+          unzip -q -j "$d"/onnxruntime-*.whl 'onnxruntime/capi/libonnxruntime.so*' -d "$d/lib"
+          echo "ORT_LIB_PATH=$(ls "$d"/lib/libonnxruntime.so.*)" >> "$GITHUB_ENV"
+      - name: Integration test (real model inference)
+        # Explicit shell enables pipefail, so a failing test isn't masked by tee.
+        shell: bash
+        env:
+          MODEL_PATH: models/yolo26n.onnx
+        run: |
+          go test -count=1 -run TestORTDetectBus -v ./internal/detector/ | tee "$RUNNER_TEMP/it.log"
+          # The test skips itself without ORT; in CI a skip means it never ran.
+          if grep -q -- '--- SKIP' "$RUNNER_TEMP/it.log"; then
+            echo "::error::integration test was skipped"; exit 1
+          fi
       - run: CGO_ENABLED=0 go build -trimpath -o /tmp/server ./cmd/server
+      - name: API test against the local server
+        env:
+          MODEL_PATH: models/yolo26n.onnx
+          ADDR: ":8080"
+          POOL_SIZE: "2"
+        run: |
+          /tmp/server > "$RUNNER_TEMP/server.log" 2>&1 &
+          scripts/test-api.sh -i tests/testdata/bus.jpg --wait 60 --bench 3 \
+            || { cat "$RUNNER_TEMP/server.log"; exit 1; }
 
   docker:
     needs: test
@@ -51,6 +81,19 @@ jobs:
             type=sha,prefix=
             type=ref,event=tag
             type=ref,event=branch
+      - name: Build image for smoke test
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: yolo-api:ci
+          cache-from: type=gha
+      - name: Smoke test the image
+        run: |
+          docker run -d --name yolo-api -p 8080:8080 yolo-api:ci
+          scripts/test-api.sh -i tests/testdata/bus.jpg --wait 90 --bench 3 \
+            || { docker logs yolo-api; exit 1; }
       - name: Build and push
         uses: docker/build-push-action@v7
         with:

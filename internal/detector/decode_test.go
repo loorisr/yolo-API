@@ -106,3 +106,46 @@ func TestDecodeRawNMS(t *testing.T) {
 		t.Fatalf("want one det per class, got %+v", out)
 	}
 }
+
+// TestLetterboxTransparent checks that a fully transparent (non-opaque) image
+// is composited over the gray pad color rather than black.
+func TestLetterboxTransparent(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 50, 30)) // all zero = transparent
+	data, _, _, _ := letterbox(img, 64)
+	want := float32(letterboxPad) / 255
+	for i, v := range data {
+		if d := v - want; d > 1e-6 || d < -1e-6 {
+			t.Fatalf("tensor[%d]=%v want %v (gray pad)", i, v, want)
+		}
+	}
+}
+
+// TestLetterboxContent checks that an opaque image lands inside the padded
+// area with its colors preserved, and the padding is gray.
+func TestLetterboxContent(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 64, 32))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = 255, 0, 0, 255
+	}
+	data, _, padX, padY := letterbox(img, 64)
+	if padX != 0 || padY != 16 {
+		t.Fatalf("pad=%v,%v want 0,16", padX, padY)
+	}
+	plane := 64 * 64
+	gray := float32(letterboxPad) / 255
+	if data[0] != gray || data[plane-1] != gray {
+		t.Fatalf("padding not gray: %v %v", data[0], data[plane-1])
+	}
+	mid := 32*64 + 32
+	if data[mid] != 1 || data[plane+mid] != 0 || data[2*plane+mid] != 0 {
+		t.Fatalf("content pixel = %v,%v,%v want 1,0,0", data[mid], data[plane+mid], data[2*plane+mid])
+	}
+}
+
+func BenchmarkLetterbox1080p(b *testing.B) {
+	img := solidImage(1920, 1080)
+	b.ReportAllocs()
+	for b.Loop() {
+		letterbox(img, 640)
+	}
+}

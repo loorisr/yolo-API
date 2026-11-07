@@ -420,53 +420,53 @@ type rawDet struct {
 // letterbox resizes img keeping aspect ratio into imgSize x imgSize with gray
 // padding, and returns the NCHW float32 tensor (0..1) plus the scale and pad
 // offsets needed to map boxes back to the original image.
+//
+// Resampling uses draw.ApproxBiLinear: it samples the 4 nearest source pixels
+// like OpenCV's INTER_LINEAR (what Ultralytics uses for training/inference),
+// and is an order of magnitude faster than draw.BiLinear, whose kernel weight
+// tables cost tens of MB and ~20-30 ms per frame — as much as the inference.
 func letterbox(img image.Image, size int) (data []float32, scale, padX, padY float64) {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	scale = min(float64(size)/float64(w), float64(size)/float64(h))
 	nw, nh := int(float64(w)*scale+0.5), int(float64(h)*scale+0.5)
-	if nw < 1 {
-		nw = 1
-	}
-	if nh < 1 {
-		nh = 1
-	}
-	if nw > size {
-		nw = size
-	}
-	if nh > size {
-		nh = size
-	}
+	nw = min(max(nw, 1), size)
+	nh = min(max(nh, 1), size)
+
 	dst := image.NewRGBA(image.Rect(0, 0, nw, nh))
-	// Composite over the gray pad color so images with an alpha channel don't
-	// get blended over transparent black (which would darken them).
-	padCol := color.RGBA{letterboxPad, letterboxPad, letterboxPad, 255}
-	draw.Draw(dst, dst.Bounds(), image.NewUniform(padCol), image.Point{}, draw.Src)
-	draw.BiLinear.Scale(dst, dst.Bounds(), img, b, draw.Over, nil)
+	if o, ok := img.(interface{ Opaque() bool }); ok && o.Opaque() {
+		// Opaque source (all JPEGs, most PNGs): plain copy, no compositing.
+		draw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, b, draw.Src, nil)
+	} else {
+		// Composite over the gray pad color so images with an alpha channel
+		// don't get blended over transparent black (which would darken them).
+		padCol := color.RGBA{letterboxPad, letterboxPad, letterboxPad, 255}
+		draw.Draw(dst, dst.Bounds(), image.NewUniform(padCol), image.Point{}, draw.Src)
+		draw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, b, draw.Over, nil)
+	}
+
 	padW, padH := size-nw, size-nh
 	// Integer grid: odd pads split floor/ceil (extra pixel goes right/bottom).
 	// padX/padY match the integer offsets below so un-letterbox inverts exactly.
-	padX, padY = float64(padW/2), float64(padH/2)
+	offX, offY := padW/2, padH/2
+	padX, padY = float64(offX), float64(offY)
 
-	data = make([]float32, 3*size*size)
 	plane := size * size
-	offY, offX := padH/2, padW/2
+	data = make([]float32, 3*plane)
 	const inv = 1.0 / 255.0
-	for y := 0; y < size; y++ {
-		sy := y - offY
-		for x := 0; x < size; x++ {
-			sx := x - offX
-			idx := y*size + x
-			if sx < 0 || sy < 0 || sx >= nw || sy >= nh {
-				data[idx] = letterboxPad * inv
-				data[plane+idx] = letterboxPad * inv
-				data[2*plane+idx] = letterboxPad * inv
-				continue
-			}
-			r, g, bl, _ := dst.RGBAAt(sx, sy).RGBA()
-			data[idx] = float32(r>>8) * inv
-			data[plane+idx] = float32(g>>8) * inv
-			data[2*plane+idx] = float32(bl>>8) * inv
+	const padV = float32(letterboxPad * inv)
+	for i := range data {
+		data[i] = padV
+	}
+	rP, gP, bP := data[:plane], data[plane:2*plane], data[2*plane:]
+	for y := 0; y < nh; y++ {
+		row := dst.Pix[y*dst.Stride : y*dst.Stride+nw*4]
+		o := (y+offY)*size + offX
+		for x := 0; x < nw; x++ {
+			p := row[x*4 : x*4+3 : x*4+3]
+			rP[o+x] = float32(p[0]) * inv
+			gP[o+x] = float32(p[1]) * inv
+			bP[o+x] = float32(p[2]) * inv
 		}
 	}
 	return data, scale, padX, padY
